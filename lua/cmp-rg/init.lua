@@ -6,8 +6,6 @@ require "cmp-rg.types"
 ---@field public timer any
 local source = {}
 
-local is_cmd = string.find(vim.o.shell, "cmd") and true or false
-
 source.new = function()
     local timer = vim.loop.new_timer()
     vim.api.nvim_create_autocmd("VimLeavePre", {
@@ -28,10 +26,9 @@ end
 source.complete = function(self, request, callback)
     local q = string.sub(request.context.cursor_before_line, request.offset)
     local pattern = request.option.pattern or "[\\w_-]+"
-    local additional_arguments = request.option.additional_arguments or ""
+    local additional_arguments = request.option.additional_arguments or {}
     local context_before = request.option.context_before or 1
     local context_after = request.option.context_after or 3
-    local quote = is_cmd and '"' or "'"
     local seen = {}
     local items = {}
     local chunk_size = 5
@@ -152,26 +149,47 @@ source.complete = function(self, request, callback)
         0,
         vim.schedule_wrap(function()
             vim.fn.jobstop(self.running_job_id)
-            self.running_job_id = vim.fn.jobstart(
-                string.format(
-                    "rg --heading --json --word-regexp -B %d -A %d --color never %s %s%s%s%s .",
-                    context_before,
-                    context_after,
-                    additional_arguments,
-                    quote,
-                    q,
-                    pattern,
-                    quote
-                ),
-                {
-                    on_stderr = on_event,
-                    on_stdout = on_event,
-                    on_exit = on_event,
-                    cwd = request.option.cwd or vim.fn.getcwd(),
-                }
-            )
+
+            -- コマンド引数を配列形式で構築
+            local cmd_args = {
+                "rg",
+                "--heading",
+                "--json",
+                "--word-regexp",
+                "-B",
+                tostring(context_before),
+                "-A",
+                tostring(context_after),
+                "--color",
+                "never",
+            }
+
+            -- additional_argumentsを追加
+            if type(additional_arguments) == "table" then
+                for _, arg in ipairs(additional_arguments) do
+                    table.insert(cmd_args, arg)
+                end
+            elseif type(additional_arguments) == "string" and additional_arguments ~= "" then
+                -- 文字列の場合は分割して追加（後方互換性のため）
+                for arg in string.gmatch(additional_arguments, "%S+") do
+                    table.insert(cmd_args, arg)
+                end
+            end
+
+            -- 検索パターンを追加
+            table.insert(cmd_args, q .. pattern)
+            table.insert(cmd_args, ".")
+
+            self.running_job_id = vim.fn.jobstart(cmd_args, {
+                on_stderr = on_event,
+                on_stdout = on_event,
+                on_exit = on_event,
+                cwd = request.option.cwd or vim.fn.getcwd(),
+            })
         end)
     )
 end
 
 return source
+
+
